@@ -273,12 +273,9 @@ export class EwsClient {
 		}
 	}
 
-	async createReplyDraft(messageId: string, replyBody: string, replyAll = false, _bodyType: 'HTML' | 'Text' = 'HTML'): Promise<IEwsMessage> {
+	async createReplyDraft(messageId: string, replyBody: string, replyAll = false, bodyType: 'HTML' | 'Text' = 'HTML'): Promise<IEwsMessage> {
 		try {
-			// Verwende den Haupt-Service fuer Stabilitaet
 			const svc = this.service;
-
-			// 1. Lade die Original-Nachricht
 			const itemId = new ews.ItemId(messageId);
 			const propertySet = new ews.PropertySet(ews.BasePropertySet.IdOnly, [
 				ews.ItemSchema.Subject,
@@ -294,23 +291,47 @@ export class EwsClient {
 				return this.handleError(error, 'CreateReplyDraft - Bind Original');
 			}
 
-			// 2. Erstelle die Antwort mit der offiziellen EWS-Methode
-			const reply = originalMessage.CreateReply(replyAll);
-			
-			// 3. Konvertiere HTML-Reply in Text (AWS WorkMail EWS Fix fuer Code 127/355)
-			// Wir wandeln <br> in Zeilenumbrueche um und entfernen andere HTML-Tags
-			const cleanText = replyBody
-				.replace(/<br\s*\/?>/gi, '\n')
-				.replace(/<p>/gi, '')
-				.replace(/<\/p>/gi, '\n')
-				.replace(/<b>/gi, '')
-				.replace(/<\/b>/gi, '')
-				.replace(/<[^>]*>/g, ''); // Entferne alle uebrigen HTML-Tags
+			// Strategie 1: HTML mit CDATA (erlaubt Signaturen und Formatierung)
+			if (bodyType === 'HTML') {
+				try {
+					const reply = originalMessage.CreateReply(replyAll);
+					// WICHTIG: CDATA Wrapper verhindert Code 127/355 bei AWS WorkMail
+					const cdataBody = `<![CDATA[${replyBody}]]>`;
+					reply.BodyPrefix = new ews.MessageBody(ews.BodyType.HTML, cdataBody);
+					
+					const response = await reply.Save(ews.WellKnownFolderName.Drafts) as unknown as { Id?: { UniqueId: string } };
+					
+					const result: IDataObject = {
+						Subject: `Re: ${originalMessage.Subject}`,
+						success: true,
+						savedAsDraft: true,
+						folder: 'Drafts',
+						mode: 'HTML',
+					};
 
-			reply.BodyPrefix = new ews.MessageBody(ews.BodyType.Text, cleanText);
+					if (response && response.Id) {
+						result.ItemId = { Id: response.Id.UniqueId };
+					}
+					return result as unknown as IEwsMessage;
+				} catch (htmlError) {
+					// Fallback zu Text wenn HTML fehlschlaegt
+					console.warn('HTML Draft failed, falling back to Text:', htmlError);
+				}
+			}
 
-			// 4. Speichere als Entwurf im Drafts-Ordner
+			// Strategie 2: Text Fallback (Sicherer Modus)
 			try {
+				const reply = originalMessage.CreateReply(replyAll);
+				const cleanText = replyBody
+					.replace(/<br\s*\/?>/gi, '\n')
+					.replace(/<p>/gi, '')
+					.replace(/<\/p>/gi, '\n')
+					.replace(/<b>/gi, '')
+					.replace(/<\/b>/gi, '')
+					.replace(/<[^>]*>/g, '');
+
+				reply.BodyPrefix = new ews.MessageBody(ews.BodyType.Text, cleanText);
+				
 				const response = await reply.Save(ews.WellKnownFolderName.Drafts) as unknown as { Id?: { UniqueId: string } };
 				
 				const result: IDataObject = {
@@ -318,16 +339,15 @@ export class EwsClient {
 					success: true,
 					savedAsDraft: true,
 					folder: 'Drafts',
-					mode: 'Text (Compatibility Mode)',
+					mode: 'Text (Fallback)',
 				};
 
 				if (response && response.Id) {
 					result.ItemId = { Id: response.Id.UniqueId };
 				}
-
 				return result as unknown as IEwsMessage;
 			} catch (error) {
-				return this.handleError(error, 'CreateReplyDraft - Save Draft');
+				return this.handleError(error, 'CreateReplyDraft - Final Fallback');
 			}
 		} catch (error) {
 			return this.handleError(error, 'CreateReplyDraft');
