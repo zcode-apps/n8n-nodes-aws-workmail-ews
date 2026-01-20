@@ -130,7 +130,7 @@ export class EwsClient {
 			const message = await ews.EmailMessage.Bind(
 				this.service,
 				itemId,
-				new ews.PropertySet(ews.BasePropertySet.FirstClassProperties)
+				new ews.PropertySet(ews.BasePropertySet.FirstClassProperties, [ews.ItemSchema.Body])
 			);
 
 			return this.convertMessageToJson(message);

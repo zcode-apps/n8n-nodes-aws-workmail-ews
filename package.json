@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-aws-workmail-ews",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "n8n node for AWS WorkMail using Exchange Web Services (EWS) protocol",
   "keywords": [
     "n8n-community-node-package",
