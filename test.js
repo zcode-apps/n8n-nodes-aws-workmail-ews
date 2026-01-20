@@ -128,6 +128,46 @@ const tests = {
     log('Reply sent successfully!', 'success');
   },
 
+  async testCreateReplyDraftManual() {
+    logSection('Testing: Create Reply Draft (Manual ID) - AUTO-FIX LOOP');
+    const testId = "AABuL089bS1iMjllN2M4Y2Y4ZTE0N2UxYTM0ODI2MWJlZjM0Y2FlYS9PVT1BbWF6b24gV29ya01haWwvQ049UmVjaXBpZW50cy9DTj00MzBlYjFmZi1mYjkzLTQ2MTktYjNiNS04MmM3MDVlMmY0ZTIWgB8kX14vQPuIsHVoSEVWpgAAAAAACRaAHyRfXi9A+4iwdWhIRVamAAAAAAKFAA==";
+    const testText = "<b>DAS IST EIN<b> TEST (Automated Fix Try)";
+    
+    const strategies = [
+      {
+        name: "CreateReply with BodyType.Text",
+        fn: async (original) => {
+          const reply = original.CreateReply(false);
+          reply.BodyPrefix = new ews.MessageBody(ews.BodyType.Text, "This is a TEXT reply via CreateReply");
+          return await reply.Save(ews.WellKnownFolderName.Drafts);
+        }
+      }
+    ];
+
+    const propertySet = new ews.PropertySet(ews.BasePropertySet.IdOnly, [
+      ews.ItemSchema.Subject,
+      ews.EmailMessageSchema.From,
+      ews.ItemSchema.Body,
+      ews.EmailMessageSchema.InternetMessageId
+    ]);
+    propertySet.RequestedBodyType = ews.BodyType.Text;
+    const originalMessage = await ews.EmailMessage.Bind(service, new ews.ItemId(testId), propertySet);
+
+    for (const strategy of strategies) {
+      log(`Trying Strategy: ${strategy.name}...`, 'info');
+      try {
+        const response = await strategy.fn(originalMessage);
+        log(`SUCCESS with ${strategy.name}!`, 'success');
+        if (response && response.Id) log(`ID: ${response.Id.UniqueId}`, 'success');
+        return; // Test erfolgreich beendet
+      } catch (error) {
+        log(`Strategy ${strategy.name} failed: ${error.message} (Code: ${error.ResponseCode || 'N/A'})`, 'warn');
+      }
+    }
+    
+    throw new Error("All strategies failed.");
+  },
+
   // FOLDER TESTS
   async testCreateFolder() {
     logSection('Testing: Create Folder');
@@ -525,6 +565,7 @@ async function showMenu() {
     { key: '2', name: 'Get Messages', test: 'testGetMessages' },
     { key: '3', name: 'Send Message', test: 'testSendMessage' },
     { key: '4', name: 'Reply to Message', test: 'testReplyToMessage' },
+    { key: 'd', name: '📝 Create Reply Draft (Manual ID)', test: 'testCreateReplyDraftManual' },
     { key: '5', name: 'Create Folder', test: 'testCreateFolder' },
     { key: '6', name: 'Get Folders', test: 'testGetFolders' },
     { key: '7', name: 'Create Event', test: 'testCreateEvent' },
@@ -599,6 +640,13 @@ async function showMenu() {
 async function main() {
   try {
     initService();
+
+    // IF arguments provided, run that test directly
+    const args = process.argv.slice(2);
+    if (args.length > 0 && tests[args[0]]) {
+      await runTest(args[0], tests[args[0]]);
+      process.exit(0);
+    }
 
     // Interactive menu loop
     while (true) {

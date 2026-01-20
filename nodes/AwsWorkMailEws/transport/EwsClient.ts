@@ -273,19 +273,16 @@ export class EwsClient {
 		}
 	}
 
-	async createReplyDraft(messageId: string, replyBody: string, replyAll = false, bodyType: 'HTML' | 'Text' = 'HTML'): Promise<IEwsMessage> {
+	async createReplyDraft(messageId: string, replyBody: string, replyAll = false, _bodyType: 'HTML' | 'Text' = 'HTML'): Promise<IEwsMessage> {
 		try {
 			// Verwende den Haupt-Service fuer Stabilitaet
 			const svc = this.service;
 
-			// 1. Lade die Original-Nachricht mit allen notwendigen Feldern
-			// Wichtig: Der Body MUSS geladen sein, damit CreateReply() stabil funktioniert
+			// 1. Lade die Original-Nachricht
 			const itemId = new ews.ItemId(messageId);
 			const propertySet = new ews.PropertySet(ews.BasePropertySet.IdOnly, [
 				ews.ItemSchema.Subject,
 				ews.EmailMessageSchema.From,
-				ews.EmailMessageSchema.ToRecipients,
-				ews.EmailMessageSchema.CcRecipients,
 				ews.ItemSchema.Body,
 			]);
 			propertySet.RequestedBodyType = ews.BodyType.Text;
@@ -298,25 +295,30 @@ export class EwsClient {
 			}
 
 			// 2. Erstelle die Antwort mit der offiziellen EWS-Methode
-			// Das sorgt fuer korrekte In-Reply-To und References Header
 			const reply = originalMessage.CreateReply(replyAll);
 			
-			// 3. Setze den Inhalt
-			const ewsBodyType = bodyType === 'Text' ? ews.BodyType.Text : ews.BodyType.HTML;
-			reply.BodyPrefix = new ews.MessageBody(ewsBodyType, replyBody);
+			// 3. Konvertiere HTML-Reply in Text (AWS WorkMail EWS Fix fuer Code 127/355)
+			// Wir wandeln <br> in Zeilenumbrueche um und entfernen andere HTML-Tags
+			const cleanText = replyBody
+				.replace(/<br\s*\/?>/gi, '\n')
+				.replace(/<p>/gi, '')
+				.replace(/<\/p>/gi, '\n')
+				.replace(/<b>/gi, '')
+				.replace(/<\/b>/gi, '')
+				.replace(/<[^>]*>/g, ''); // Entferne alle uebrigen HTML-Tags
 
-			// 4. Speichere als Entwurf
-			// Wir speichern explizit im Drafts-Ordner
+			reply.BodyPrefix = new ews.MessageBody(ews.BodyType.Text, cleanText);
+
+			// 4. Speichere als Entwurf im Drafts-Ordner
 			try {
 				const response = await reply.Save(ews.WellKnownFolderName.Drafts) as unknown as { Id?: { UniqueId: string } };
 				
-				// Falls wir eine ID zurueckbekommen (bei manchen EWS Versionen), laden wir den Entwurf
-				// Ansonsten geben wir den Erfolg so zurueck
 				const result: IDataObject = {
 					Subject: `Re: ${originalMessage.Subject}`,
 					success: true,
 					savedAsDraft: true,
 					folder: 'Drafts',
+					mode: 'Text (Compatibility Mode)',
 				};
 
 				if (response && response.Id) {
