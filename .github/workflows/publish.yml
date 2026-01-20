@@ -1,0 +1,24 @@
+name: Publish Package to NPM
+
+on:
+  push:
+    branches:
+      - main # Die Action startet nur, wenn du in den 'main' branch pushst
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      
+      - run: npm install
+      # Falls du n8n-Nodes in TypeScript schreibst (was Standard ist):
+      - run: npm run build 
+      
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
