@@ -13,19 +13,32 @@ import {
 
 export class EwsClient {
 	private service: ews.ExchangeService;
+	private credentials: IEwsCredentials;
 
 	constructor(credentials: IEwsCredentials) {
-		// Create ExchangeService
-		this.service = new ews.ExchangeService(ews.ExchangeVersion.Exchange2010_SP2);
+		this.credentials = credentials;
+		this.service = this.createService();
+	}
+	
+	private createService(): ews.ExchangeService {
+		// Create fresh ExchangeService
+		const svc = new ews.ExchangeService(ews.ExchangeVersion.Exchange2010_SP2);
 
 		// Set credentials
-		this.service.Credentials = new ews.WebCredentials(
-			credentials.username,
-			credentials.password
+		svc.Credentials = new ews.WebCredentials(
+			this.credentials.username,
+			this.credentials.password
 		);
 
 		// Set URL
-		this.service.Url = new ews.Uri(credentials.ewsUrl);
+		svc.Url = new ews.Uri(this.credentials.ewsUrl);
+		
+		return svc;
+	}
+	
+	// Erstellt einen frischen Service fuer kritische Operationen
+	private getFreshService(): ews.ExchangeService {
+		return this.createService();
 	}
 
 	private handleError(error: any, operation: string): never {
@@ -267,6 +280,9 @@ export class EwsClient {
 		// Hilfsfunktion: Warte eine bestimmte Zeit
 		const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+		// Verwende einen FRISCHEN Service fuer diese Operation
+		const freshService = this.getFreshService();
+
 		// Lade die Original-Nachricht
 		const itemId = new ews.ItemId(messageId);
 		const propertySet = new ews.PropertySet(ews.BasePropertySet.IdOnly);
@@ -276,7 +292,7 @@ export class EwsClient {
 		
 		let originalMessage: ews.EmailMessage;
 		try {
-			originalMessage = await ews.EmailMessage.Bind(this.service, itemId, propertySet);
+			originalMessage = await ews.EmailMessage.Bind(freshService, itemId, propertySet);
 		} catch (error: any) {
 			const errorMsg = error?.message || error?.Response?.ErrorMessage || 'Fehler beim Laden der Original-Nachricht';
 			this.handleError({ message: errorMsg, ResponseCode: error?.ResponseCode }, 'CreateReplyDraft - Bind');
@@ -307,8 +323,9 @@ export class EwsClient {
 		
 		for (let attempt = 0; attempt < 3; attempt++) {
 			try {
-				// Erstelle JEDES MAL eine neue EmailMessage (wichtig!)
-				const draftMessage = new ews.EmailMessage(this.service);
+				// Erstelle JEDES MAL einen frischen Service UND eine neue EmailMessage
+				const attemptService = this.getFreshService();
+				const draftMessage = new ews.EmailMessage(attemptService);
 				draftMessage.Subject = replySubject;
 				
 				const ewsBodyType = bodyType === 'Text' ? ews.BodyType.Text : ews.BodyType.HTML;
@@ -344,8 +361,9 @@ export class EwsClient {
 		// Lade den gespeicherten Entwurf fuer die Rueckgabe
 		if (savedDraftId) {
 			try {
+				const loadService = this.getFreshService();
 				const savedDraft = await ews.EmailMessage.Bind(
-					this.service,
+					loadService,
 					savedDraftId,
 					new ews.PropertySet(ews.BasePropertySet.FirstClassProperties)
 				);
