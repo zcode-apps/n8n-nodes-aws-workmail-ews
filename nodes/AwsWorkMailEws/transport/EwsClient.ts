@@ -29,23 +29,39 @@ export class EwsClient {
 	}
 
 	private handleError(error: any, operation: string): never {
-		// Entferne sensible Informationen aus der Fehlermeldung
+		// Extrahiere Fehlermeldung aus verschiedenen moeglichen Quellen
 		let safeMessage = 'Unbekannter Fehler';
 
+		// Versuche verschiedene Fehlerquellen
 		if (error.message) {
-			// Entferne potenzielle sensible Daten
-			safeMessage = error.message
-				.replace(/password|token|key|secret|credential/gi, '[REDACTED]')
-				.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '[EMAIL]')
-				.replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, '[IP]')
-				.substring(0, 200); // Begrenze Länge
+			safeMessage = error.message;
+		} else if (error.Message) {
+			safeMessage = error.Message;
+		} else if (error.ErrorMessage) {
+			safeMessage = error.ErrorMessage;
+		} else if (typeof error === 'string') {
+			safeMessage = error;
+		}
+		
+		// EWS-spezifische Fehlerdetails extrahieren
+		if (error.Response?.ErrorMessage) {
+			safeMessage += ` - ${error.Response.ErrorMessage}`;
+		}
+		if (error.ResponseCode) {
+			safeMessage += ` (Code: ${error.ResponseCode})`;
 		}
 
-		// Erstelle sichere Fehlerbeschreibung ohne Stack-Trace in Produktion
-		let description = 'Details wurden aus Sicherheitsgründen entfernt';
-		if (process.env.NODE_ENV === 'development' && error.stack) {
-			// Nur in Entwicklung Stack-Trace zeigen
-			description = `Entwicklungsinfo: ${error.stack.substring(0, 500)}`;
+		// Entferne nur wirklich sensible Daten (Passwoerter, Tokens)
+		safeMessage = safeMessage
+			.replace(/password[=:]\s*\S+/gi, 'password=[REDACTED]')
+			.replace(/token[=:]\s*\S+/gi, 'token=[REDACTED]')
+			.replace(/key[=:]\s*\S+/gi, 'key=[REDACTED]')
+			.substring(0, 500); // Erlaube laengere Meldungen
+
+		// Beschreibung mit mehr Details
+		let description = safeMessage;
+		if (error.stack && process.env.NODE_ENV === 'development') {
+			description = `${safeMessage} | Stack: ${error.stack.substring(0, 300)}`;
 		}
 
 		throw new NodeApiError(
@@ -248,16 +264,33 @@ export class EwsClient {
 	}
 
 	async createReplyDraft(messageId: string, replyBody: string, _replyAll = false, bodyType: 'HTML' | 'Text' = 'HTML'): Promise<IEwsMessage> {
-		// Lade die Original-Nachricht
+		// Retry-Funktion fuer EWS-Operationen
+		const retry = async <T>(fn: () => Promise<T>, maxRetries = 2, delay = 1000): Promise<T> => {
+			let lastError: any;
+			for (let attempt = 0; attempt <= maxRetries; attempt++) {
+				try {
+					return await fn();
+				} catch (error: any) {
+					lastError = error;
+					if (attempt < maxRetries) {
+						// Warte vor dem naechsten Versuch
+						await new Promise(resolve => setTimeout(resolve, delay * (attempt + 1)));
+					}
+				}
+			}
+			throw lastError;
+		};
+
+		// Lade die Original-Nachricht mit Retry
 		const itemId = new ews.ItemId(messageId);
 		const propertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties);
 		
 		let originalMessage: ews.EmailMessage;
 		try {
-			originalMessage = await ews.EmailMessage.Bind(this.service, itemId, propertySet);
+			originalMessage = await retry(() => ews.EmailMessage.Bind(this.service, itemId, propertySet));
 		} catch (error: any) {
 			const errorMsg = error?.message || error?.Response?.ErrorMessage || 'Fehler beim Laden der Original-Nachricht';
-			this.handleError({ message: errorMsg }, 'CreateReplyDraft - Bind');
+			this.handleError({ message: errorMsg, ...error }, 'CreateReplyDraft - Bind');
 		}
 
 		// Hole Absender-Info sicher
@@ -289,20 +322,24 @@ export class EwsClient {
 		// Setze Empfaenger
 		draftMessage.ToRecipients.Add(fromAddress);
 		
-		// Speichere als Entwurf im Drafts-Ordner
+		// Speichere als Entwurf im Drafts-Ordner mit Retry
 		try {
-			await draftMessage.Save(ews.WellKnownFolderName.Drafts);
+			await retry(() => draftMessage.Save(ews.WellKnownFolderName.Drafts));
 		} catch (error: any) {
 			const errorMsg = error?.message || error?.Response?.ErrorMessage || error?.toString() || 'Fehler beim Speichern des Entwurfs';
 			// Extrahiere mehr Details aus dem EWS-Fehler
 			let detailedMsg = errorMsg;
 			if (error?.Response) {
-				detailedMsg += ` (Response: ${JSON.stringify(error.Response).substring(0, 200)})`;
+				try {
+					detailedMsg += ` (Response: ${JSON.stringify(error.Response).substring(0, 200)})`;
+				} catch {
+					// JSON stringify fehlgeschlagen
+				}
 			}
 			if (error?.InnerException) {
 				detailedMsg += ` (Inner: ${error.InnerException.message || error.InnerException})`;
 			}
-			this.handleError({ message: detailedMsg }, 'CreateReplyDraft - Save');
+			this.handleError({ message: detailedMsg, ResponseCode: error?.ResponseCode }, 'CreateReplyDraft - Save');
 		}
 		
 		// Lade den gespeicherten Entwurf fuer die Rueckgabe
