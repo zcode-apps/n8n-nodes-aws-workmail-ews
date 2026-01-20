@@ -36,27 +36,28 @@ export class EwsClient {
 		return svc;
 	}
 
-	private handleError(error: any, operation: string): never {
+	private handleError(error: unknown, operation: string): never {
 		// Extrahiere Fehlermeldung aus verschiedenen moeglichen Quellen
 		let safeMessage = 'Unbekannter Fehler';
+		const err = error as any;
 
 		// Versuche verschiedene Fehlerquellen
-		if (error.message) {
-			safeMessage = error.message;
-		} else if (error.Message) {
-			safeMessage = error.Message;
-		} else if (error.ErrorMessage) {
-			safeMessage = error.ErrorMessage;
+		if (err.message) {
+			safeMessage = err.message;
+		} else if (err.Message) {
+			safeMessage = err.Message;
+		} else if (err.ErrorMessage) {
+			safeMessage = err.ErrorMessage;
 		} else if (typeof error === 'string') {
 			safeMessage = error;
 		}
 		
 		// EWS-spezifische Fehlerdetails extrahieren
-		if (error.Response?.ErrorMessage) {
-			safeMessage += ` - ${error.Response.ErrorMessage}`;
+		if (err.Response?.ErrorMessage) {
+			safeMessage += ` - ${err.Response.ErrorMessage}`;
 		}
-		if (error.ResponseCode) {
-			safeMessage += ` (Code: ${error.ResponseCode})`;
+		if (err.ResponseCode) {
+			safeMessage += ` (Code: ${err.ResponseCode})`;
 		}
 
 		// Entferne nur wirklich sensible Daten (Passwoerter, Tokens)
@@ -68,8 +69,8 @@ export class EwsClient {
 
 		// Beschreibung mit mehr Details
 		let description = safeMessage;
-		if (error.stack && process.env.NODE_ENV === 'development') {
-			description = `${safeMessage} | Stack: ${error.stack.substring(0, 300)}`;
+		if (err.stack && process.env.NODE_ENV === 'development') {
+			description = `${safeMessage} | Stack: ${err.stack.substring(0, 300)}`;
 		}
 
 		throw new NodeApiError(
@@ -91,7 +92,7 @@ export class EwsClient {
 				const recipients = Array.isArray(message.toRecipients)
 					? message.toRecipients
 					: [message.toRecipients];
-				recipients.forEach((email: any) => {
+				recipients.forEach((email: string | { EmailAddress: string }) => {
 					emailMessage.ToRecipients.Add(typeof email === 'string' ? email : email.EmailAddress);
 				});
 			}
@@ -100,7 +101,7 @@ export class EwsClient {
 				const recipients = Array.isArray(message.ccRecipients)
 					? message.ccRecipients
 					: [message.ccRecipients];
-				recipients.forEach((email: any) => {
+				recipients.forEach((email: string | { EmailAddress: string }) => {
 					emailMessage.CcRecipients.Add(typeof email === 'string' ? email : email.EmailAddress);
 				});
 			}
@@ -109,7 +110,7 @@ export class EwsClient {
 				const recipients = Array.isArray(message.bccRecipients)
 					? message.bccRecipients
 					: [message.bccRecipients];
-				recipients.forEach((email: any) => {
+				recipients.forEach((email: string | { EmailAddress: string }) => {
 					emailMessage.BccRecipients.Add(typeof email === 'string' ? email : email.EmailAddress);
 				});
 			}
@@ -179,14 +180,15 @@ export class EwsClient {
 			view.PropertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties);
 
 			// Find items
-			const findResults = await this.service.FindItems(folderIdObj, view);
+			const findResults = await this.service.FindItems(folderIdObj as any, view);
 
 			// Load full message details (including Body)
 			const messages: IEwsMessage[] = [];
 			const bodyPropertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties, [ews.ItemSchema.Body]);
 			bodyPropertySet.RequestedBodyType = ews.BodyType.Text;
 			
-			for (const item of findResults.Items) {
+			const items = (findResults as any).Items || [];
+			for (const item of items) {
 				if (item instanceof ews.EmailMessage) {
 					// Bind to get full message with Body
 					const fullMessage = await ews.EmailMessage.Bind(
@@ -244,7 +246,7 @@ export class EwsClient {
 			const itemId = new ews.ItemId(messageId);
 			const targetFolder = this.getFolderId(targetFolderId);
 
-			const response = await this.service.MoveItems([itemId], targetFolder);
+			const response = await this.service.MoveItems([itemId], targetFolder as any);
 			if (!response.Responses[0]?.Item?.Id) {
 				throw new Error('Move operation failed: No valid response received');
 			}
@@ -291,7 +293,7 @@ export class EwsClient {
 			let originalMessage: ews.EmailMessage;
 			try {
 				originalMessage = await ews.EmailMessage.Bind(svc, itemId, propertySet);
-			} catch (error: any) {
+			} catch (error) {
 				return this.handleError(error, 'CreateReplyDraft - Bind Original');
 			}
 
@@ -306,26 +308,26 @@ export class EwsClient {
 			// 4. Speichere als Entwurf
 			// Wir speichern explizit im Drafts-Ordner
 			try {
-				const response = await reply.Save(ews.WellKnownFolderName.Drafts);
+				const response = await reply.Save(ews.WellKnownFolderName.Drafts) as unknown as { Id?: { UniqueId: string } };
 				
 				// Falls wir eine ID zurueckbekommen (bei manchen EWS Versionen), laden wir den Entwurf
 				// Ansonsten geben wir den Erfolg so zurueck
-				let result: any = {
+				const result: IDataObject = {
 					Subject: `Re: ${originalMessage.Subject}`,
 					success: true,
 					savedAsDraft: true,
 					folder: 'Drafts',
 				};
 
-				if (response && (response as any).Id) {
-					result.ItemId = { Id: (response as any).Id.UniqueId };
+				if (response && response.Id) {
+					result.ItemId = { Id: response.Id.UniqueId };
 				}
 
-				return result;
-			} catch (error: any) {
+				return result as unknown as IEwsMessage;
+			} catch (error) {
 				return this.handleError(error, 'CreateReplyDraft - Save Draft');
 			}
-		} catch (error: any) {
+		} catch (error) {
 			return this.handleError(error, 'CreateReplyDraft');
 		}
 	}
@@ -340,7 +342,7 @@ export class EwsClient {
 			folder.DisplayName = folderName;
 
 			const parentFolder = this.getFolderId(parentFolderId);
-			await folder.Save(parentFolder);
+			await folder.Save(parentFolder as any);
 
 			return {
 				FolderId: { Id: folder.Id.UniqueId },
@@ -354,7 +356,7 @@ export class EwsClient {
 	async getFolder(folderId: string): Promise<IEwsFolder> {
 		try {
 			const folderIdObj = this.getFolderId(folderId);
-			const folder = await ews.Folder.Bind(this.service, folderIdObj);
+			const folder = await ews.Folder.Bind(this.service, folderIdObj as any);
 
 			return {
 				FolderId: { Id: folder.Id.UniqueId },
@@ -373,7 +375,7 @@ export class EwsClient {
 			const parentFolder = this.getFolderId(parentFolderId);
 			const view = new ews.FolderView(100);
 
-			const findResults = await this.service.FindFolders(parentFolder, view);
+			const findResults = await this.service.FindFolders(parentFolder as any, view);
 
 			const folders: IEwsFolder[] = [];
 			for (const folder of findResults.Folders) {
@@ -837,9 +839,9 @@ export class EwsClient {
 	// HELPER METHODS
 	// ===============================
 
-	private getFolderId(folderId: string): any {
+	private getFolderId(folderId: string): ews.WellKnownFolderName | ews.FolderId {
 		// Map well-known folder names
-		const wellKnownFolders: { [key: string]: any } = {
+		const wellKnownFolders: Record<string, ews.WellKnownFolderName> = {
 			'inbox': ews.WellKnownFolderName.Inbox,
 			'sentitems': ews.WellKnownFolderName.SentItems,
 			'deleteditems': ews.WellKnownFolderName.DeletedItems,
@@ -851,7 +853,7 @@ export class EwsClient {
 		};
 
 		const lowerFolderId = folderId.toLowerCase();
-		if (wellKnownFolders[lowerFolderId]) {
+		if (wellKnownFolders[lowerFolderId] !== undefined) {
 			return wellKnownFolders[lowerFolderId];
 		}
 
@@ -860,7 +862,7 @@ export class EwsClient {
 
 	private convertMessageToJson(message: ews.EmailMessage): IEwsMessage {
 		// Extract Body safely - try multiple approaches
-		let bodyData;
+		let bodyData: { BodyType: string; Value: string };
 		try {
 			let bodyValue = '';
 			let bodyType = 'Text';
