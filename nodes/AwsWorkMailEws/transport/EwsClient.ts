@@ -264,33 +264,22 @@ export class EwsClient {
 	}
 
 	async createReplyDraft(messageId: string, replyBody: string, _replyAll = false, bodyType: 'HTML' | 'Text' = 'HTML'): Promise<IEwsMessage> {
-		// Retry-Funktion fuer EWS-Operationen
-		const retry = async <T>(fn: () => Promise<T>, maxRetries = 2, delay = 1000): Promise<T> => {
-			let lastError: any;
-			for (let attempt = 0; attempt <= maxRetries; attempt++) {
-				try {
-					return await fn();
-				} catch (error: any) {
-					lastError = error;
-					if (attempt < maxRetries) {
-						// Warte vor dem naechsten Versuch
-						await new Promise(resolve => setTimeout(resolve, delay * (attempt + 1)));
-					}
-				}
-			}
-			throw lastError;
-		};
+		// Hilfsfunktion: Warte eine bestimmte Zeit
+		const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-		// Lade die Original-Nachricht mit Retry
+		// Lade die Original-Nachricht
 		const itemId = new ews.ItemId(messageId);
-		const propertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties);
+		const propertySet = new ews.PropertySet(ews.BasePropertySet.IdOnly);
+		// Fuege benoetigte Properties einzeln hinzu
+		propertySet.Add(ews.ItemSchema.Subject);
+		propertySet.Add(ews.EmailMessageSchema.From);
 		
 		let originalMessage: ews.EmailMessage;
 		try {
-			originalMessage = await retry(() => ews.EmailMessage.Bind(this.service, itemId, propertySet));
+			originalMessage = await ews.EmailMessage.Bind(this.service, itemId, propertySet);
 		} catch (error: any) {
 			const errorMsg = error?.message || error?.Response?.ErrorMessage || 'Fehler beim Laden der Original-Nachricht';
-			this.handleError({ message: errorMsg, ...error }, 'CreateReplyDraft - Bind');
+			this.handleError({ message: errorMsg, ResponseCode: error?.ResponseCode }, 'CreateReplyDraft - Bind');
 		}
 
 		// Hole Absender-Info sicher
@@ -308,46 +297,56 @@ export class EwsClient {
 			this.handleError({ message: 'Keine Absender-Adresse in der Original-Nachricht gefunden' }, 'CreateReplyDraft');
 		}
 
-		// Erstelle eine neue EmailMessage als Entwurf
-		const draftMessage = new ews.EmailMessage(this.service);
-		
-		// Setze den Betreff mit "Re: " Prefix
+		// Betreff vorbereiten
 		const originalSubject = originalMessage!.Subject || '';
-		draftMessage.Subject = originalSubject.startsWith('Re: ') ? originalSubject : `Re: ${originalSubject}`;
+		const replySubject = originalSubject.startsWith('Re: ') ? originalSubject : `Re: ${originalSubject}`;
+
+		// Retry-Logik fuer das Speichern
+		let lastError: any = null;
+		let savedDraftId: ews.ItemId | null = null;
 		
-		// Setze den Body
-		const ewsBodyType = bodyType === 'Text' ? ews.BodyType.Text : ews.BodyType.HTML;
-		draftMessage.Body = new ews.MessageBody(ewsBodyType, replyBody);
-		
-		// Setze Empfaenger
-		draftMessage.ToRecipients.Add(fromAddress);
-		
-		// Speichere als Entwurf im Drafts-Ordner mit Retry
-		try {
-			await retry(() => draftMessage.Save(ews.WellKnownFolderName.Drafts));
-		} catch (error: any) {
-			const errorMsg = error?.message || error?.Response?.ErrorMessage || error?.toString() || 'Fehler beim Speichern des Entwurfs';
-			// Extrahiere mehr Details aus dem EWS-Fehler
-			let detailedMsg = errorMsg;
-			if (error?.Response) {
-				try {
-					detailedMsg += ` (Response: ${JSON.stringify(error.Response).substring(0, 200)})`;
-				} catch {
-					// JSON stringify fehlgeschlagen
+		for (let attempt = 0; attempt < 3; attempt++) {
+			try {
+				// Erstelle JEDES MAL eine neue EmailMessage (wichtig!)
+				const draftMessage = new ews.EmailMessage(this.service);
+				draftMessage.Subject = replySubject;
+				
+				const ewsBodyType = bodyType === 'Text' ? ews.BodyType.Text : ews.BodyType.HTML;
+				draftMessage.Body = new ews.MessageBody(ewsBodyType, replyBody);
+				draftMessage.ToRecipients.Add(fromAddress);
+				
+				// Speichere als Entwurf
+				await draftMessage.Save(ews.WellKnownFolderName.Drafts);
+				
+				savedDraftId = draftMessage.Id;
+				lastError = null;
+				break; // Erfolg - Schleife verlassen
+				
+			} catch (error: any) {
+				lastError = error;
+				// Bei internem Serverfehler (127) warten und erneut versuchen
+				if (attempt < 2) {
+					await sleep(2000 * (attempt + 1)); // 2s, 4s
 				}
 			}
-			if (error?.InnerException) {
-				detailedMsg += ` (Inner: ${error.InnerException.message || error.InnerException})`;
+		}
+		
+		// Falls alle Versuche fehlgeschlagen
+		if (lastError) {
+			const errorMsg = lastError?.message || lastError?.Response?.ErrorMessage || lastError?.toString() || 'Fehler beim Speichern des Entwurfs';
+			let detailedMsg = errorMsg;
+			if (lastError?.ResponseCode) {
+				detailedMsg += ` (Code: ${lastError.ResponseCode})`;
 			}
-			this.handleError({ message: detailedMsg, ResponseCode: error?.ResponseCode }, 'CreateReplyDraft - Save');
+			this.handleError({ message: detailedMsg, ResponseCode: lastError?.ResponseCode }, 'CreateReplyDraft - Save');
 		}
 		
 		// Lade den gespeicherten Entwurf fuer die Rueckgabe
-		if (draftMessage.Id) {
+		if (savedDraftId) {
 			try {
 				const savedDraft = await ews.EmailMessage.Bind(
 					this.service,
-					draftMessage.Id,
+					savedDraftId,
 					new ews.PropertySet(ews.BasePropertySet.FirstClassProperties)
 				);
 				return this.convertMessageToJson(savedDraft);
@@ -357,7 +356,7 @@ export class EwsClient {
 		}
 
 		return {
-			Subject: draftMessage.Subject,
+			Subject: replySubject,
 			success: true,
 			savedAsDraft: true,
 			folder: 'Drafts',
