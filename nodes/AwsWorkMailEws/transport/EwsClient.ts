@@ -248,67 +248,84 @@ export class EwsClient {
 	}
 
 	async createReplyDraft(messageId: string, replyBody: string, _replyAll = false, bodyType: 'HTML' | 'Text' = 'HTML'): Promise<IEwsMessage> {
+		// Lade die Original-Nachricht
+		const itemId = new ews.ItemId(messageId);
+		const propertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties);
+		
+		let originalMessage: ews.EmailMessage;
 		try {
-			// Lade die Original-Nachricht
-			const itemId = new ews.ItemId(messageId);
-			const propertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties);
-			const originalMessage = await ews.EmailMessage.Bind(this.service, itemId, propertySet);
+			originalMessage = await ews.EmailMessage.Bind(this.service, itemId, propertySet);
+		} catch (error: any) {
+			const errorMsg = error?.message || error?.Response?.ErrorMessage || 'Fehler beim Laden der Original-Nachricht';
+			this.handleError({ message: errorMsg }, 'CreateReplyDraft - Bind');
+		}
 
-			// Hole Absender-Info sicher
-			let fromAddress = '';
-			try {
-				if (originalMessage.From) {
-					fromAddress = originalMessage.From.Address || '';
-				}
-			} catch {
-				// From nicht verfuegbar
+		// Hole Absender-Info sicher
+		let fromAddress = '';
+		try {
+			if (originalMessage!.From) {
+				fromAddress = originalMessage!.From.Address || '';
 			}
-			
-			// Falls keine From-Adresse, Fehler werfen
-			if (!fromAddress) {
-				throw new Error('Keine Absender-Adresse in der Original-Nachricht gefunden');
-			}
+		} catch {
+			// From nicht verfuegbar
+		}
+		
+		// Falls keine From-Adresse, Fehler werfen
+		if (!fromAddress) {
+			this.handleError({ message: 'Keine Absender-Adresse in der Original-Nachricht gefunden' }, 'CreateReplyDraft');
+		}
 
-			// Erstelle eine neue EmailMessage als Entwurf
-			const draftMessage = new ews.EmailMessage(this.service);
-			
-			// Setze den Betreff mit "Re: " Prefix
-			const originalSubject = originalMessage.Subject || '';
-			draftMessage.Subject = originalSubject.startsWith('Re: ') ? originalSubject : `Re: ${originalSubject}`;
-			
-			// Setze den Body
-			const ewsBodyType = bodyType === 'Text' ? ews.BodyType.Text : ews.BodyType.HTML;
-			draftMessage.Body = new ews.MessageBody(ewsBodyType, replyBody);
-			
-			// Setze Empfaenger
-			draftMessage.ToRecipients.Add(fromAddress);
-			
-			// Speichere als Entwurf im Drafts-Ordner
+		// Erstelle eine neue EmailMessage als Entwurf
+		const draftMessage = new ews.EmailMessage(this.service);
+		
+		// Setze den Betreff mit "Re: " Prefix
+		const originalSubject = originalMessage!.Subject || '';
+		draftMessage.Subject = originalSubject.startsWith('Re: ') ? originalSubject : `Re: ${originalSubject}`;
+		
+		// Setze den Body
+		const ewsBodyType = bodyType === 'Text' ? ews.BodyType.Text : ews.BodyType.HTML;
+		draftMessage.Body = new ews.MessageBody(ewsBodyType, replyBody);
+		
+		// Setze Empfaenger
+		draftMessage.ToRecipients.Add(fromAddress);
+		
+		// Speichere als Entwurf im Drafts-Ordner
+		try {
 			await draftMessage.Save(ews.WellKnownFolderName.Drafts);
-			
-			// Lade den gespeicherten Entwurf fuer die Rueckgabe
-			if (draftMessage.Id) {
+		} catch (error: any) {
+			const errorMsg = error?.message || error?.Response?.ErrorMessage || error?.toString() || 'Fehler beim Speichern des Entwurfs';
+			// Extrahiere mehr Details aus dem EWS-Fehler
+			let detailedMsg = errorMsg;
+			if (error?.Response) {
+				detailedMsg += ` (Response: ${JSON.stringify(error.Response).substring(0, 200)})`;
+			}
+			if (error?.InnerException) {
+				detailedMsg += ` (Inner: ${error.InnerException.message || error.InnerException})`;
+			}
+			this.handleError({ message: detailedMsg }, 'CreateReplyDraft - Save');
+		}
+		
+		// Lade den gespeicherten Entwurf fuer die Rueckgabe
+		if (draftMessage.Id) {
+			try {
 				const savedDraft = await ews.EmailMessage.Bind(
 					this.service,
 					draftMessage.Id,
 					new ews.PropertySet(ews.BasePropertySet.FirstClassProperties)
 				);
 				return this.convertMessageToJson(savedDraft);
+			} catch {
+				// Falls Bind fehlschlaegt, trotzdem Erfolg melden
 			}
-
-			return {
-				Subject: draftMessage.Subject,
-				success: true,
-				savedAsDraft: true,
-				folder: 'Drafts',
-				toRecipient: fromAddress,
-			};
-		} catch (error: any) {
-			// Bessere Fehlerausgabe
-			const errorMsg = error?.message || error?.toString() || 'Unbekannter Fehler';
-			console.error('CreateReplyDraft Error:', errorMsg);
-			this.handleError({ message: errorMsg }, 'CreateReplyDraft');
 		}
+
+		return {
+			Subject: draftMessage.Subject,
+			success: true,
+			savedAsDraft: true,
+			folder: 'Drafts',
+			toRecipient: fromAddress,
+		};
 	}
 
 	// ===============================
