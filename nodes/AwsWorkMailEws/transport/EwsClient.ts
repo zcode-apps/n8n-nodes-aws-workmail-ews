@@ -251,39 +251,86 @@ export class EwsClient {
 		try {
 			const itemId = new ews.ItemId(messageId);
 			const propertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties, [ews.ItemSchema.Body]);
+			propertySet.RequestedBodyType = ews.BodyType.Text;
 			const originalMessage = await ews.EmailMessage.Bind(this.service, itemId, propertySet);
 
-			const reply = originalMessage.CreateReply(replyAll);
-
+			// Erstelle eine neue EmailMessage als Entwurf (nicht ResponseMessage verwenden)
+			const draftMessage = new ews.EmailMessage(this.service);
+			
+			// Setze den Betreff mit "Re: " Prefix
+			const originalSubject = originalMessage.Subject || '';
+			draftMessage.Subject = originalSubject.startsWith('Re: ') ? originalSubject : `Re: ${originalSubject}`;
+			
+			// Setze den Body - kombiniere neuen Text mit Original
 			const ewsBodyType = bodyType === 'Text' ? ews.BodyType.Text : ews.BodyType.HTML;
-			reply.BodyPrefix = new ews.MessageBody(ewsBodyType, replyBody);
-
-			// Save als Entwurf im Drafts-Ordner statt zu senden
-			await reply.Save(ews.WellKnownFolderName.Drafts);
-
-			// Suche den neuesten Entwurf im Drafts-Ordner mit passendem Betreff
-			const expectedSubject = `Re: ${originalMessage.Subject}`;
-			const view = new ews.ItemView(5);
-			view.PropertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties, [ews.ItemSchema.Body]);
-			view.PropertySet.RequestedBodyType = ews.BodyType.Text;
 			
-			const findResults = await this.service.FindItems(ews.WellKnownFolderName.Drafts, view);
+			// Erstelle Reply-Body mit Zitat der Original-Nachricht
+			let originalBodyText = '';
+			try {
+				if (originalMessage.Body && originalMessage.Body.Text) {
+					originalBodyText = originalMessage.Body.Text;
+				}
+			} catch {
+				// Body nicht verfuegbar
+			}
 			
-			// Suche nach dem passenden Entwurf (neuester mit passendem Betreff)
-			for (const item of findResults.Items) {
-				if (item instanceof ews.EmailMessage && item.Subject === expectedSubject) {
-					const draftMessage = await ews.EmailMessage.Bind(
-						this.service,
-						item.Id,
-						propertySet
-					);
-					return this.convertMessageToJson(draftMessage);
+			let fullBody: string;
+			if (bodyType === 'HTML') {
+				const quotedOriginal = originalBodyText 
+					? `<br><br><hr><b>Von:</b> ${originalMessage.From?.Name || ''} &lt;${originalMessage.From?.Address || ''}&gt;<br><b>Gesendet:</b> ${originalMessage.DateTimeSent?.toString() || ''}<br><b>Betreff:</b> ${originalSubject}<br><br>${originalBodyText.replace(/\n/g, '<br>')}`
+					: '';
+				fullBody = `${replyBody}${quotedOriginal}`;
+			} else {
+				const quotedOriginal = originalBodyText
+					? `\n\n-------- Original-Nachricht --------\nVon: ${originalMessage.From?.Name || ''} <${originalMessage.From?.Address || ''}>\nGesendet: ${originalMessage.DateTimeSent?.toString() || ''}\nBetreff: ${originalSubject}\n\n${originalBodyText}`
+					: '';
+				fullBody = `${replyBody}${quotedOriginal}`;
+			}
+			
+			draftMessage.Body = new ews.MessageBody(ewsBodyType, fullBody);
+			
+			// Setze Empfaenger (Reply-To oder From der Original-Nachricht)
+			if (originalMessage.From && originalMessage.From.Address) {
+				draftMessage.ToRecipients.Add(originalMessage.From.Address);
+			}
+			
+			// Bei ReplyAll auch CC-Empfaenger hinzufuegen
+			if (replyAll) {
+				// ToRecipients der Original-Nachricht (ausser eigene Adresse)
+				if (originalMessage.ToRecipients) {
+					for (let i = 0; i < originalMessage.ToRecipients.Count; i++) {
+						const recipient = originalMessage.ToRecipients._getItem(i);
+						if (recipient && recipient.Address && recipient.Address !== originalMessage.From?.Address) {
+							draftMessage.CcRecipients.Add(recipient.Address);
+						}
+					}
+				}
+				// CcRecipients der Original-Nachricht
+				if (originalMessage.CcRecipients) {
+					for (let i = 0; i < originalMessage.CcRecipients.Count; i++) {
+						const recipient = originalMessage.CcRecipients._getItem(i);
+						if (recipient && recipient.Address) {
+							draftMessage.CcRecipients.Add(recipient.Address);
+						}
+					}
 				}
 			}
+			
+			// Speichere als Entwurf im Drafts-Ordner
+			await draftMessage.Save(ews.WellKnownFolderName.Drafts);
+			
+			// Lade den gespeicherten Entwurf fuer die Rueckgabe
+			if (draftMessage.Id) {
+				const savedDraft = await ews.EmailMessage.Bind(
+					this.service,
+					draftMessage.Id,
+					propertySet
+				);
+				return this.convertMessageToJson(savedDraft);
+			}
 
-			// Fallback wenn kein passender Entwurf gefunden
 			return {
-				Subject: expectedSubject,
+				Subject: draftMessage.Subject,
 				success: true,
 				savedAsDraft: true,
 				message: 'Entwurf wurde im Drafts-Ordner gespeichert',
