@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.14] - 2026-01-20
+
+### Added
+- **Create Reply Draft**: Neue Operation zum Erstellen von Antwort-Entwuerfen. Die Antwort wird als Entwurf im Drafts-Ordner gespeichert und kann vor dem Senden ueberprueft werden. Ideal fuer AI-Agent-Workflows, die E-Mail-Antworten vorbereiten.
+
+### Fixed
+- **Email Body leer bei externen Mails**: Behoben, dass der Body bei HTML-Mails (z.B. von externen Absendern) leer war. Jetzt wird `RequestedBodyType = BodyType.Text` gesetzt, um den Inhalt zuverlaessig zu erhalten.
+- **Body-Extraktion verbessert**: Robustere Extraktion des Body-Inhalts mit mehreren Fallback-Methoden (Body.Text, Body.text, Body.Content, toString).
+
+### Technical Details
+- `getMessage()` und `getMessages()` setzen jetzt explizit `propertySet.RequestedBodyType = ews.BodyType.Text`
+- `convertMessageToJson()` versucht mehrere Wege, den Body-Text zu extrahieren
+- BodyType wird korrekt von numerischen Werten (0=HTML, 1=Text) in Strings konvertiert
+- Neue `createReplyDraft()` Methode im EwsClient
+
 ## [1.0.5] - 2026-01-20
 
 ### Fixed

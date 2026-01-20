@@ -113,6 +113,8 @@ export class AwsWorkMailEws implements INodeType {
 						responseData = await message.move.call(this, i);
 					} else if (operation === 'reply') {
 						responseData = await message.reply.call(this, i);
+					} else if (operation === 'createReplyDraft') {
+						responseData = await message.createReplyDraft.call(this, i);
 					} else {
 						throw new Error(`Unknown operation: ${operation}`);
 					}

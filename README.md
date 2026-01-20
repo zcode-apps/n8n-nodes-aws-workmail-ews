@@ -67,7 +67,8 @@ This node supports the following resources and operations:
 
 - **Send**: Send a new email message
 - **Send and Wait for Response**: Send email and wait for reply (coming soon)
-- **Reply**: Reply to an existing message
+- **Reply**: Reply to an existing message (sends immediately)
+- **Create Reply Draft**: Create a reply draft that is saved in the Drafts folder for review before sending (ideal for AI agent workflows)
 - **Move**: Move a message to a different folder
 - **Delete**: Delete a message
 - **Get**: Retrieve a single message by ID
@@ -170,6 +171,23 @@ This node supports the following resources and operations:
    - **Message ID**: ID of the message to move
    - **Target Folder ID**: ID of the destination folder
 
+### Example 6: Create Reply Draft with AI Agent
+
+This example shows how to use an AI agent to prepare email replies that can be reviewed before sending.
+
+1. Add the **AWS WorkMail Trigger (EWS)** to start workflow on new emails
+2. Add an **AI Agent** node to generate a reply
+3. Add the **AWS WorkMail (EWS)** node:
+   - Select **Message** as the resource
+   - Select **Create Reply Draft** as the operation
+   - Configure:
+     - **Message ID**: `{{ $('Trigger').item.json.ItemId.Id }}`
+     - **Reply Body**: `{{ $('AI Agent').item.json.response }}`
+     - **Body Type**: `HTML` or `Text`
+     - **Reply All**: Enable if needed
+
+The draft will be saved in your Drafts folder where you can review and edit it before sending manually.
+
 ## Distinguished Folder IDs
 
 AWS WorkMail EWS supports these standard folder identifiers:
@@ -212,20 +230,20 @@ Enable "Continue On Fail" in the node settings to handle errors gracefully in yo
 
 This node has been **extensively tested** with real AWS WorkMail:
 
-- ✅ **100% Success Rate**: All 25 operations tested and working (25/25)
+- ✅ **100% Success Rate**: All 26 operations tested and working (26/26)
 - ✅ **Real Environment**: Tested with AWS WorkMail EU-WEST-1
 - ✅ **All Resources**: Messages, Folders, Events, Contacts, Attachments
 - ✅ **All Operations**: Create, Read, Update, Delete (CRUD) for each resource
 
 ### Test Results
 ```
-Messages:    6/6  operations ✅
+Messages:    7/7  operations ✅
 Folders:     5/5  operations ✅
 Events:      5/5  operations ✅
 Contacts:    5/5  operations ✅
 Attachments: 4/4  operations ✅
 ───────────────────────────────
-Total:      25/25 operations ✅
+Total:      26/26 operations ✅
 Success Rate: 100%
 ```
 

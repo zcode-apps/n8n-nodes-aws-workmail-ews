@@ -247,6 +247,52 @@ export class EwsClient {
 		}
 	}
 
+	async createReplyDraft(messageId: string, replyBody: string, replyAll = false, bodyType: 'HTML' | 'Text' = 'HTML'): Promise<IEwsMessage> {
+		try {
+			const itemId = new ews.ItemId(messageId);
+			const propertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties, [ews.ItemSchema.Body]);
+			const originalMessage = await ews.EmailMessage.Bind(this.service, itemId, propertySet);
+
+			const reply = originalMessage.CreateReply(replyAll);
+
+			const ewsBodyType = bodyType === 'Text' ? ews.BodyType.Text : ews.BodyType.HTML;
+			reply.BodyPrefix = new ews.MessageBody(ewsBodyType, replyBody);
+
+			// Save als Entwurf im Drafts-Ordner statt zu senden
+			await reply.Save(ews.WellKnownFolderName.Drafts);
+
+			// Suche den neuesten Entwurf im Drafts-Ordner mit passendem Betreff
+			const expectedSubject = `Re: ${originalMessage.Subject}`;
+			const view = new ews.ItemView(5);
+			view.PropertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties, [ews.ItemSchema.Body]);
+			view.PropertySet.RequestedBodyType = ews.BodyType.Text;
+			
+			const findResults = await this.service.FindItems(ews.WellKnownFolderName.Drafts, view);
+			
+			// Suche nach dem passenden Entwurf (neuester mit passendem Betreff)
+			for (const item of findResults.Items) {
+				if (item instanceof ews.EmailMessage && item.Subject === expectedSubject) {
+					const draftMessage = await ews.EmailMessage.Bind(
+						this.service,
+						item.Id,
+						propertySet
+					);
+					return this.convertMessageToJson(draftMessage);
+				}
+			}
+
+			// Fallback wenn kein passender Entwurf gefunden
+			return {
+				Subject: expectedSubject,
+				success: true,
+				savedAsDraft: true,
+				message: 'Entwurf wurde im Drafts-Ordner gespeichert',
+			};
+		} catch (error) {
+			this.handleError(error, 'CreateReplyDraft');
+		}
+	}
+
 	// ===============================
 	// FOLDER OPERATIONS
 	// ===============================

@@ -13,6 +13,12 @@ export const messageOperations: INodeProperties[] = [
 		},
 		options: [
 			{
+				name: 'Create Reply Draft',
+				value: 'createReplyDraft',
+				description: 'Create a reply draft that can be reviewed before sending',
+				action: 'Create a reply draft',
+			},
+			{
 				name: 'Delete',
 				value: 'delete',
 				description: 'Delete a message',
@@ -226,7 +232,7 @@ export const messageFields: INodeProperties[] = [
 		displayOptions: {
 			show: {
 				resource: ['message'],
-				operation: ['get', 'delete', 'update', 'move', 'reply'],
+				operation: ['get', 'delete', 'update', 'move', 'reply', 'createReplyDraft'],
 			},
 		},
 		description: 'ID of the message',
@@ -441,5 +447,62 @@ export const messageFields: INodeProperties[] = [
 			},
 		},
 		description: 'Whether to reply to all recipients',
+	},
+
+	// ----------------------------------
+	//         message:createReplyDraft
+	// ----------------------------------
+	{
+		displayName: 'Reply Body',
+		name: 'draftReplyBody',
+		type: 'string',
+		typeOptions: {
+			rows: 5,
+		},
+		default: '',
+		required: true,
+		displayOptions: {
+			show: {
+				resource: ['message'],
+				operation: ['createReplyDraft'],
+			},
+		},
+		description: 'Body of the reply draft. This will be saved as a draft in the Drafts folder.',
+	},
+	{
+		displayName: 'Body Type',
+		name: 'draftBodyType',
+		type: 'options',
+		displayOptions: {
+			show: {
+				resource: ['message'],
+				operation: ['createReplyDraft'],
+			},
+		},
+		options: [
+			{
+				name: 'HTML',
+				value: 'HTML',
+			},
+			{
+				name: 'Text',
+				value: 'Text',
+			},
+		],
+		default: 'HTML',
+		description: 'The format of the reply body',
+	},
+	{
+		displayName: 'Reply All',
+		name: 'draftReplyAll',
+		type: 'boolean',
+		default: false,
+		displayOptions: {
+			show: {
+				resource: ['message'],
+				operation: ['createReplyDraft'],
+			},
+		},
+		description: 'Whether to include all original recipients in the reply draft',
 	},
 ];
