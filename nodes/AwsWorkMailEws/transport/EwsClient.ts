@@ -35,11 +35,6 @@ export class EwsClient {
 		
 		return svc;
 	}
-	
-	// Erstellt einen frischen Service fuer kritische Operationen
-	private getFreshService(): ews.ExchangeService {
-		return this.createService();
-	}
 
 	private handleError(error: any, operation: string): never {
 		// Extrahiere Fehlermeldung aus verschiedenen moeglichen Quellen
@@ -276,110 +271,63 @@ export class EwsClient {
 		}
 	}
 
-	async createReplyDraft(messageId: string, replyBody: string, _replyAll = false, bodyType: 'HTML' | 'Text' = 'HTML'): Promise<IEwsMessage> {
-		// Hilfsfunktion: Warte eine bestimmte Zeit
-		const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-		// Verwende einen FRISCHEN Service fuer diese Operation
-		const freshService = this.getFreshService();
-
-		// Lade die Original-Nachricht
-		const itemId = new ews.ItemId(messageId);
-		const propertySet = new ews.PropertySet(ews.BasePropertySet.IdOnly);
-		// Fuege benoetigte Properties einzeln hinzu
-		propertySet.Add(ews.ItemSchema.Subject);
-		propertySet.Add(ews.EmailMessageSchema.From);
-		
-		let originalMessage: ews.EmailMessage;
+	async createReplyDraft(messageId: string, replyBody: string, replyAll = false, bodyType: 'HTML' | 'Text' = 'HTML'): Promise<IEwsMessage> {
 		try {
-			originalMessage = await ews.EmailMessage.Bind(freshService, itemId, propertySet);
-		} catch (error: any) {
-			const errorMsg = error?.message || error?.Response?.ErrorMessage || 'Fehler beim Laden der Original-Nachricht';
-			this.handleError({ message: errorMsg, ResponseCode: error?.ResponseCode }, 'CreateReplyDraft - Bind');
-		}
+			// Verwende den Haupt-Service fuer Stabilitaet
+			const svc = this.service;
 
-		// Hole Absender-Info sicher
-		let fromAddress = '';
-		try {
-			if (originalMessage!.From) {
-				fromAddress = originalMessage!.From.Address || '';
-			}
-		} catch {
-			// From nicht verfuegbar
-		}
-		
-		// Falls keine From-Adresse, Fehler werfen
-		if (!fromAddress) {
-			this.handleError({ message: 'Keine Absender-Adresse in der Original-Nachricht gefunden' }, 'CreateReplyDraft');
-		}
+			// 1. Lade die Original-Nachricht mit allen notwendigen Feldern
+			// Wichtig: Der Body MUSS geladen sein, damit CreateReply() stabil funktioniert
+			const itemId = new ews.ItemId(messageId);
+			const propertySet = new ews.PropertySet(ews.BasePropertySet.IdOnly, [
+				ews.ItemSchema.Subject,
+				ews.EmailMessageSchema.From,
+				ews.EmailMessageSchema.ToRecipients,
+				ews.EmailMessageSchema.CcRecipients,
+				ews.ItemSchema.Body,
+			]);
+			propertySet.RequestedBodyType = ews.BodyType.Text;
 
-		// Betreff vorbereiten
-		const originalSubject = originalMessage!.Subject || '';
-		const replySubject = originalSubject.startsWith('Re: ') ? originalSubject : `Re: ${originalSubject}`;
-
-		// Retry-Logik fuer das Speichern
-		let lastError: any = null;
-		let savedDraftId: ews.ItemId | null = null;
-		
-		for (let attempt = 0; attempt < 3; attempt++) {
+			let originalMessage: ews.EmailMessage;
 			try {
-				// Erstelle JEDES MAL einen frischen Service UND eine neue EmailMessage
-				const attemptService = this.getFreshService();
-				const draftMessage = new ews.EmailMessage(attemptService);
-				draftMessage.Subject = replySubject;
-				
-				const ewsBodyType = bodyType === 'Text' ? ews.BodyType.Text : ews.BodyType.HTML;
-				draftMessage.Body = new ews.MessageBody(ewsBodyType, replyBody);
-				draftMessage.ToRecipients.Add(fromAddress);
-				
-				// Speichere als Entwurf
-				await draftMessage.Save(ews.WellKnownFolderName.Drafts);
-				
-				savedDraftId = draftMessage.Id;
-				lastError = null;
-				break; // Erfolg - Schleife verlassen
-				
+				originalMessage = await ews.EmailMessage.Bind(svc, itemId, propertySet);
 			} catch (error: any) {
-				lastError = error;
-				// Bei internem Serverfehler (127) warten und erneut versuchen
-				if (attempt < 2) {
-					await sleep(2000 * (attempt + 1)); // 2s, 4s
-				}
+				return this.handleError(error, 'CreateReplyDraft - Bind Original');
 			}
-		}
-		
-		// Falls alle Versuche fehlgeschlagen
-		if (lastError) {
-			const errorMsg = lastError?.message || lastError?.Response?.ErrorMessage || lastError?.toString() || 'Fehler beim Speichern des Entwurfs';
-			let detailedMsg = errorMsg;
-			if (lastError?.ResponseCode) {
-				detailedMsg += ` (Code: ${lastError.ResponseCode})`;
-			}
-			this.handleError({ message: detailedMsg, ResponseCode: lastError?.ResponseCode }, 'CreateReplyDraft - Save');
-		}
-		
-		// Lade den gespeicherten Entwurf fuer die Rueckgabe
-		if (savedDraftId) {
-			try {
-				const loadService = this.getFreshService();
-				const savedDraft = await ews.EmailMessage.Bind(
-					loadService,
-					savedDraftId,
-					new ews.PropertySet(ews.BasePropertySet.FirstClassProperties)
-				);
-				return this.convertMessageToJson(savedDraft);
-			} catch {
-				// Falls Bind fehlschlaegt, trotzdem Erfolg melden
-			}
-		}
 
-		return {
-			Subject: replySubject,
-			success: true,
-			savedAsDraft: true,
-			folder: 'Drafts',
-			toRecipient: fromAddress,
-		};
+			// 2. Erstelle die Antwort mit der offiziellen EWS-Methode
+			// Das sorgt fuer korrekte In-Reply-To und References Header
+			const reply = originalMessage.CreateReply(replyAll);
+			
+			// 3. Setze den Inhalt
+			const ewsBodyType = bodyType === 'Text' ? ews.BodyType.Text : ews.BodyType.HTML;
+			reply.BodyPrefix = new ews.MessageBody(ewsBodyType, replyBody);
+
+			// 4. Speichere als Entwurf
+			// Wir speichern explizit im Drafts-Ordner
+			try {
+				const response = await reply.Save(ews.WellKnownFolderName.Drafts);
+				
+				// Falls wir eine ID zurueckbekommen (bei manchen EWS Versionen), laden wir den Entwurf
+				// Ansonsten geben wir den Erfolg so zurueck
+				let result: any = {
+					Subject: `Re: ${originalMessage.Subject}`,
+					success: true,
+					savedAsDraft: true,
+					folder: 'Drafts',
+				};
+
+				if (response && (response as any).Id) {
+					result.ItemId = { Id: (response as any).Id.UniqueId };
+				}
+
+				return result;
+			} catch (error: any) {
+				return this.handleError(error, 'CreateReplyDraft - Save Draft');
+			}
+		} catch (error: any) {
+			return this.handleError(error, 'CreateReplyDraft');
+		}
 	}
 
 	// ===============================
