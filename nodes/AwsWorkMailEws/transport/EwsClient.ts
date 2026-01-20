@@ -127,10 +127,13 @@ export class EwsClient {
 	async getMessage(messageId: string): Promise<IEwsMessage> {
 		try {
 			const itemId = new ews.ItemId(messageId);
+			const propertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties, [ews.ItemSchema.Body]);
+			propertySet.RequestedBodyType = ews.BodyType.Text;
+			
 			const message = await ews.EmailMessage.Bind(
 				this.service,
 				itemId,
-				new ews.PropertySet(ews.BasePropertySet.FirstClassProperties, [ews.ItemSchema.Body])
+				propertySet
 			);
 
 			return this.convertMessageToJson(message);
@@ -156,13 +159,16 @@ export class EwsClient {
 
 			// Load full message details (including Body)
 			const messages: IEwsMessage[] = [];
+			const bodyPropertySet = new ews.PropertySet(ews.BasePropertySet.FirstClassProperties, [ews.ItemSchema.Body]);
+			bodyPropertySet.RequestedBodyType = ews.BodyType.Text;
+			
 			for (const item of findResults.Items) {
 				if (item instanceof ews.EmailMessage) {
 					// Bind to get full message with Body
 					const fullMessage = await ews.EmailMessage.Bind(
 						this.service,
 						item.Id,
-						new ews.PropertySet(ews.BasePropertySet.FirstClassProperties, [ews.ItemSchema.Body])
+						bodyPropertySet
 					);
 					messages.push(this.convertMessageToJson(fullMessage));
 				}
@@ -770,20 +776,44 @@ export class EwsClient {
 	}
 
 	private convertMessageToJson(message: ews.EmailMessage): IEwsMessage {
-		// Extract Body safely
+		// Extract Body safely - try multiple approaches
 		let bodyData;
 		try {
-			if (message.Body && message.Body.BodyType) {
-				bodyData = {
-					BodyType: message.Body.BodyType?.toString() || 'Text',
-					Value: message.Body.Text || message.Body.toString() || '',
-				};
-			} else {
-				bodyData = {
-					BodyType: 'Text',
-					Value: '',
-				};
+			let bodyValue = '';
+			let bodyType = 'Text';
+			
+			if (message.Body) {
+				// Versuche verschiedene Wege, den Body-Text zu extrahieren
+				if (typeof message.Body.Text === 'string' && message.Body.Text.length > 0) {
+					bodyValue = message.Body.Text;
+				} else if (typeof (message.Body as any).text === 'string' && (message.Body as any).text.length > 0) {
+					bodyValue = (message.Body as any).text;
+				} else if (typeof (message.Body as any).Content === 'string' && (message.Body as any).Content.length > 0) {
+					bodyValue = (message.Body as any).Content;
+				} else if (typeof (message.Body as any).content === 'string' && (message.Body as any).content.length > 0) {
+					bodyValue = (message.Body as any).content;
+				} else if (typeof message.Body.toString === 'function') {
+					const strValue = message.Body.toString();
+					// Nur verwenden wenn es kein "[object Object]" ist
+					if (strValue && !strValue.includes('[object') && strValue.length > 0) {
+						bodyValue = strValue;
+					}
+				}
+				
+				// Body-Type extrahieren
+				if (message.Body.BodyType !== undefined && message.Body.BodyType !== null) {
+					if (typeof message.Body.BodyType === 'number') {
+						bodyType = message.Body.BodyType === 0 ? 'HTML' : 'Text';
+					} else {
+						bodyType = String(message.Body.BodyType);
+					}
+				}
 			}
+			
+			bodyData = {
+				BodyType: bodyType,
+				Value: bodyValue,
+			};
 		} catch {
 			// Body not loaded
 			bodyData = {
