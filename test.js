@@ -128,6 +128,35 @@ const tests = {
     log('Reply sent successfully!', 'success');
   },
 
+  async testReplyManualId() {
+    logSection('Testing: Reply to Message (Manual ID)');
+    const testId = "AABuL089bS1iMjllN2M4Y2Y4ZTE0N2UxYTM0ODI2MWJlZjM0Y2FlYS9PVT1BbWF6b24gV29ya01haWwvQ049UmVjaXBpZW50cy9DTj03ZGM3OTM2MC1kMTZhLTQ2ZGQtODNkZi1mMTQ5YzZlYTIyMGQWk+qzevHmSayKePNMz0KFEQAAAAAACRaT6rN68eZJrIp480zPQoURAAAAAAAbAA==";
+    const testText = "Dies ist eine Test-Antwort auf eine spezifische ID.";
+    
+    try {
+      const itemId = new ews.ItemId(testId);
+      log(`Binde an Message ID: ${testId.substring(0, 50)}...`, 'info');
+      
+      const message = await ews.EmailMessage.Bind(service, itemId);
+      log(`Gefunden: ${message.Subject}`, 'success');
+
+      log(`Erstelle Antwort...`, 'info');
+      const reply = message.CreateReply(false);
+      
+      // Verwende CDATA Strategie wie in createReplyDraft
+      const cdataBody = `<![CDATA[${testText}]]>`;
+      reply.BodyPrefix = new ews.MessageBody(ews.BodyType.HTML, cdataBody);
+      
+      log(`Sende Antwort...`, 'info');
+      await reply.SendAndSaveCopy();
+      log('Antwort erfolgreich gesendet!', 'success');
+    } catch (error) {
+      log(`Fehler bei Reply: ${error.message}`, 'error');
+      if (error.ResponseCode) log(`Response Code: ${error.ResponseCode}`, 'error');
+      throw error;
+    }
+  },
+
   async testCreateReplyDraftManual() {
     logSection('Testing: Create Reply Draft (Manual ID) - HTML CDATA Strategy');
     const testId = "AABuL089bS1iMjllN2M4Y2Y4ZTE0N2UxYTM0ODI2MWJlZjM0Y2FlYS9PVT1BbWF6b24gV29ya01haWwvQ049UmVjaXBpZW50cy9DTj00MzBlYjFmZi1mYjkzLTQ2MTktYjNiNS04MmM3MDVlMmY0ZTIWgB8kX14vQPuIsHVoSEVWpgAAAAAACRaAHyRfXi9A+4iwdWhIRVamAAAAAAKFAA==";
@@ -553,6 +582,7 @@ async function showMenu() {
     { key: '2', name: 'Get Messages', test: 'testGetMessages' },
     { key: '3', name: 'Send Message', test: 'testSendMessage' },
     { key: '4', name: 'Reply to Message', test: 'testReplyToMessage' },
+    { key: 'r', name: '✉️ Reply to Message (Manual ID)', test: 'testReplyManualId' },
     { key: 'd', name: '📝 Create Reply Draft (Manual ID)', test: 'testCreateReplyDraftManual' },
     { key: '5', name: 'Create Folder', test: 'testCreateFolder' },
     { key: '6', name: 'Get Folders', test: 'testGetFolders' },
