@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { EwsClient } from '../../transport/EwsClient';
 
 // Sicherheits-Schemas für Update-Operationen
-const messageIdSchema = z.string().max(200).regex(/^[A-Za-z0-9_-]+$/, 'Ungültige Message-ID');
+const messageIdSchema = z.string().max(1024).regex(/^[A-Za-z0-9+/=_-]+$/, 'Ungültige Message-ID');
 const updateFieldsSchema = z.object({
 	IsRead: z.boolean().optional(),
 	Subject: z.string().max(255).regex(/^[^<>&]*$/, 'Betreff darf keine HTML-Tags enthalten').optional(),

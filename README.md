@@ -67,8 +67,7 @@ This node supports the following resources and operations:
 
 - **Send**: Send a new email message
 - **Send and Wait for Response**: Send email and wait for reply (coming soon)
-- **Reply**: Reply to an existing message (sends immediately)
-- **Create Reply Draft**: Create a reply draft that is saved in the Drafts folder for review before sending (ideal for AI agent workflows)
+- **Reply**: Reply to an existing message
 - **Move**: Move a message to a different folder
 - **Delete**: Delete a message
 - **Get**: Retrieve a single message by ID

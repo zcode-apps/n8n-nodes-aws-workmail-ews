@@ -4,7 +4,7 @@ import { EwsClient } from '../../transport/EwsClient';
 
 // Sicherheits-Schema für Reply-Body
 const replyBodySchema = z.string().max(50000); // 50KB Limit für Reply-Body
-const messageIdSchema = z.string().max(200).regex(/^[A-Za-z0-9_-]+$/, 'Ungültige Message-ID');
+const messageIdSchema = z.string().max(1024).regex(/^[A-Za-z0-9+/=_-]+$/, 'Ungültige Message-ID');
 
 export async function reply(
 	this: IExecuteFunctions,
