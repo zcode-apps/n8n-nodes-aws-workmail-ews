@@ -265,9 +265,7 @@ export class EwsClient {
 
 			const reply = message.CreateReply(replyAll);
 
-			// WICHTIG: CDATA Wrapper verhindert "Access is denied" (Code 127/355) bei AWS WorkMail
-			const cdataBody = `<![CDATA[${replyBody}]]>`;
-			reply.BodyPrefix = new ews.MessageBody(ews.BodyType.HTML, cdataBody);
+			reply.BodyPrefix = new ews.MessageBody(ews.BodyType.HTML, replyBody);
 
 			await reply.SendAndSaveCopy();
 		} catch (error) {
